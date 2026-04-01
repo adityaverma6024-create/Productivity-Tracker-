@@ -1,0 +1,697 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { AppState, Task, Exam } from '../types';
+import { ArrowLeft, Check, X, Pencil, Trash2, Plus, Calendar, GraduationCap, MoreVertical } from 'lucide-react';
+import { t } from '../lib/i18n';
+import { playSound, triggerHaptic } from '../lib/sound';
+
+export default function StudentZoneScreen({ 
+  state, 
+  onUpdateTasks, 
+  onUpdateExams,
+  onCancel 
+}: { 
+  state: AppState, 
+  onUpdateTasks: (dayId: string, tasks: Task[]) => void,
+  onUpdateExams: (exams: Exam[]) => void,
+  onCancel: () => void 
+}) {
+  const theme = state.settings.theme;
+  const lang = state.settings.language;
+  const settings = state.settings;
+  const isGlass = theme === 'glass';
+
+  // Find current day
+  const now = new Date();
+  const currentDay = state.days.find(d => {
+    const dayDate = new Date(d.date);
+    const startOfDay = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0);
+    const endOfDay = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 23, 59, 59);
+    return now >= startOfDay && now <= endOfDay;
+  });
+
+  // To-Do State
+  const [newTaskText, setNewTaskText] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const [localTasks, setLocalTasks] = useState<Task[]>(currentDay?.tasks || []);
+
+  useEffect(() => {
+    if (currentDay) {
+      setLocalTasks(currentDay.tasks);
+    }
+  }, [currentDay?.tasks]);
+
+  // Exam State
+  const [showAddExam, setShowAddExam] = useState(false);
+  const [newExamName, setNewExamName] = useState('');
+  const [newExamDate, setNewExamDate] = useState('');
+  
+  // Exam Interaction State
+  const [activeExamMenu, setActiveExamMenu] = useState<string | null>(null);
+  const [editingExamId, setEditingExamId] = useState<string | null>(null);
+  const [editingExamName, setEditingExamName] = useState('');
+  const [editingExamDate, setEditingExamDate] = useState('');
+  const [examToDelete, setExamToDelete] = useState<Exam | null>(null);
+  const pressTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // Exam Completion Popup State
+  const [examToRate, setExamToRate] = useState<Exam | null>(null);
+  const [examRating, setExamRating] = useState<Exam['rating'] | null>(null);
+  const [examResponse, setExamResponse] = useState('');
+
+  const exams = state.exams || [];
+
+  useEffect(() => {
+    // Check for passed exams
+    const passedExam = exams.find(e => new Date(e.date) < new Date() && e.status === 'upcoming');
+    if (passedExam && !examToRate) {
+      setExamToRate(passedExam);
+    }
+  }, [exams, examToRate]);
+
+  const handleBack = () => {
+    playSound('click', settings.sound);
+    triggerHaptic('light', settings.haptics);
+    onCancel();
+  };
+
+  // --- TO-DO LOGIC ---
+  const toggleTask = (taskId: string) => {
+    if (!currentDay) return;
+    const newTasks = localTasks.map(t => {
+      if (t.id === taskId) {
+        const isCompleted = !t.completed;
+        if (isCompleted) {
+          playSound('complete', settings.sound);
+          triggerHaptic('success', settings.haptics);
+        } else {
+          playSound('click', settings.sound);
+          triggerHaptic('light', settings.haptics);
+        }
+        return { ...t, completed: isCompleted };
+      }
+      return t;
+    });
+    setLocalTasks(newTasks);
+    onUpdateTasks(currentDay.id, newTasks);
+  };
+
+  const addTask = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newTaskText.trim() || !currentDay) return;
+    
+    playSound('add', settings.sound);
+    triggerHaptic('medium', settings.haptics);
+    
+    const newTask: Task = {
+      id: Date.now().toString(),
+      text: newTaskText.trim(),
+      completed: false
+    };
+    const newTasks = [...localTasks, newTask];
+    setLocalTasks(newTasks);
+    onUpdateTasks(currentDay.id, newTasks);
+    setNewTaskText('');
+  };
+
+  const saveEdit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!editingText.trim() || !editingId || !currentDay) return;
+    
+    playSound('click', settings.sound);
+    triggerHaptic('light', settings.haptics);
+    
+    const newTasks = localTasks.map(t => 
+      t.id === editingId ? { ...t, text: editingText.trim() } : t
+    );
+    setLocalTasks(newTasks);
+    onUpdateTasks(currentDay.id, newTasks);
+    setEditingId(null);
+  };
+
+  const deleteTask = (taskId: string) => {
+    if (!currentDay) return;
+    playSound('delete', settings.sound);
+    triggerHaptic('medium', settings.haptics);
+    
+    const newTasks = localTasks.filter(t => t.id !== taskId);
+    setLocalTasks(newTasks);
+    onUpdateTasks(currentDay.id, newTasks);
+  };
+
+  // --- EXAM LOGIC ---
+  const addExam = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newExamName.trim() || !newExamDate) return;
+
+    playSound('add', settings.sound);
+    triggerHaptic('medium', settings.haptics);
+
+    const newExam: Exam = {
+      id: Date.now().toString(),
+      name: newExamName.trim(),
+      date: newExamDate,
+      status: 'upcoming'
+    };
+
+    onUpdateExams([...exams, newExam]);
+    setNewExamName('');
+    setNewExamDate('');
+    setShowAddExam(false);
+  };
+
+  const saveExamEdit = () => {
+    if (!editingExamId || !editingExamName.trim() || !editingExamDate) return;
+    
+    playSound('save', settings.sound);
+    triggerHaptic('success', settings.haptics);
+
+    const updatedExams = exams.map(e => 
+      e.id === editingExamId 
+        ? { ...e, name: editingExamName.trim(), date: editingExamDate } 
+        : e
+    );
+    onUpdateExams(updatedExams);
+    setEditingExamId(null);
+    setActiveExamMenu(null);
+  };
+
+  const confirmDeleteExam = () => {
+    if (!examToDelete) return;
+    playSound('delete', settings.sound);
+    triggerHaptic('medium', settings.haptics);
+    
+    const updatedExams = exams.filter(e => e.id !== examToDelete.id);
+    onUpdateExams(updatedExams);
+    setExamToDelete(null);
+    setActiveExamMenu(null);
+  };
+
+  const handlePointerDown = (examId: string) => {
+    pressTimer.current = setTimeout(() => {
+      triggerHaptic('heavy', settings.haptics);
+      playSound('click', settings.sound);
+      setActiveExamMenu(examId);
+    }, 2000); // 2 seconds long press
+  };
+
+  const handlePointerUpOrLeave = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+
+  const saveExamRating = () => {
+    if (!examToRate || !examRating) return;
+    
+    playSound('save', settings.sound);
+    triggerHaptic('success', settings.haptics);
+
+    const updatedExams = exams.map(e => 
+      e.id === examToRate.id 
+        ? { ...e, status: 'completed' as const, rating: examRating, response: examResponse } 
+        : e
+    );
+    
+    onUpdateExams(updatedExams);
+    setExamToRate(null);
+    setExamRating(null);
+    setExamResponse('');
+  };
+
+  const upcomingExams = exams.filter(e => e.status === 'upcoming').sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const completedExams = exams.filter(e => e.status === 'completed').sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const inputClass = `w-full px-5 py-4 rounded-2xl outline-none transition-all border ${
+    theme === 'dark' 
+      ? 'bg-neutral-800 border-neutral-700 focus:border-neutral-500 text-white placeholder:text-neutral-500' 
+      : theme === 'eyecare'
+      ? 'bg-[#f4ecd8] border-[#e6d5b8] focus:border-[#cbb590] text-[#5c4d3c] placeholder:text-[#a08f75]'
+      : isGlass
+      ? 'bg-white/50 backdrop-blur-sm border-white/60 focus:border-white focus:bg-white/70 text-neutral-800 placeholder:text-neutral-500 shadow-inner'
+      : 'bg-neutral-50 border-neutral-200 focus:border-neutral-400 focus:bg-white text-neutral-800 placeholder:text-neutral-400'
+  }`;
+
+  const cardClass = `p-6 rounded-2xl border ${
+    theme === 'dark' ? 'bg-neutral-800/50 border-neutral-700' : 
+    theme === 'eyecare' ? 'bg-[#fdf6e3]/50 border-[#e6d5b8]' : 
+    isGlass ? 'bg-white/40 backdrop-blur-md border-white/50 shadow-lg shadow-black/5' :
+    'bg-white border-neutral-200 shadow-sm'
+  }`;
+
+  const popupClass = `relative w-full max-w-md rounded-[2rem] p-8 shadow-2xl border ${
+    theme === 'dark' ? 'bg-neutral-900 text-white border-neutral-800' : 
+    theme === 'eyecare' ? 'bg-[#fdf6e3] text-[#5c4d3c] border-[#e6d5b8]' : 
+    isGlass ? 'bg-white/70 backdrop-blur-xl border-white/80 text-neutral-800 shadow-2xl shadow-black/10' :
+    'bg-white text-neutral-800 border-neutral-100'
+  }`;
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: -20 }}
+      className="min-h-screen p-6 sm:p-12 max-w-3xl mx-auto pb-32"
+    >
+      <button onClick={handleBack} className="flex items-center mb-8 opacity-70 hover:opacity-100 transition-opacity">
+        <ArrowLeft size={20} className="mr-2" /> {t(lang, 'back')}
+      </button>
+
+      <div className="flex items-center mb-8">
+        <GraduationCap size={32} className="mr-4 text-emerald-500" />
+        <h1 className="text-3xl font-medium tracking-tight">{t(lang, 'studentZone')}</h1>
+      </div>
+
+      <div className="space-y-12">
+        {/* SECTION 1: TO-DO */}
+        <section>
+          <h2 className="text-xl font-medium mb-6 flex items-center">
+            {t(lang, 'day')} {currentDay ? currentDay.dayIndex : '-'} To-Do
+          </h2>
+          
+          {currentDay ? (
+            <div className={cardClass}>
+              <div 
+                className={`flex items-center p-4 rounded-2xl border transition-all shadow-sm mb-6 ${
+                  theme === 'dark' ? 'bg-neutral-800 border-neutral-700 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/50' : 
+                  isGlass ? 'bg-white/50 border-white/60 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/50' :
+                  'bg-white border-neutral-200 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/50'
+                }`}
+              >
+                <input 
+                  value={newTaskText}
+                  onChange={e => setNewTaskText(e.target.value)}
+                  placeholder={t(lang, 'addYourTask')}
+                  className={`flex-1 bg-transparent outline-none text-[15px] ${theme === 'dark' ? 'text-white placeholder:text-neutral-500' : 'text-neutral-800 placeholder:text-neutral-400'}`}
+                />
+                <motion.button 
+                  whileTap={{ scale: 0.96 }}
+                  type="button" 
+                  onPointerDown={(e) => { e.preventDefault(); addTask(); }}
+                  className={`ml-3 w-10 h-10 rounded-full flex items-center justify-center transition-all shrink-0 shadow-md ${
+                    newTaskText.trim() ? 'bg-emerald-500 text-white hover:bg-emerald-600 scale-100 hover:scale-105' : 'bg-neutral-200 text-neutral-400 scale-100 cursor-not-allowed'
+                  }`}
+                >
+                  <Check size={20} strokeWidth={3} />
+                </motion.button>
+              </div>
+
+              <div className="space-y-3">
+                <AnimatePresence initial={false}>
+                  {localTasks.map(task => (
+                    <motion.div 
+                      key={task.id} 
+                      initial={{ opacity: 0, y: 20, height: 0 }}
+                      animate={{ opacity: 1, y: 0, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0, scale: 0.95, marginBottom: 0 }}
+                      transition={{ duration: 0.2, ease: "easeOut" }}
+                      className={`group flex items-center p-4 rounded-2xl transition-all duration-150 border ${
+                        task.completed 
+                          ? (theme === 'dark' ? 'bg-emerald-900/20 border-emerald-900/50' : isGlass ? 'bg-emerald-50/40 border-emerald-200/50' : 'bg-emerald-50/50 border-emerald-100/50') 
+                          : (theme === 'dark' ? 'bg-neutral-800 border-neutral-700' : isGlass ? 'bg-white/50 border-white/60' : 'bg-white border-neutral-200 shadow-sm')
+                      }`}
+                    >
+                      <motion.div 
+                        whileTap={{ scale: 0.96 }}
+                        onClick={() => toggleTask(task.id)}
+                        className={`w-6 h-6 rounded-full border flex items-center justify-center mr-4 cursor-pointer transition-all duration-150 shrink-0 ${
+                        task.completed 
+                          ? 'bg-emerald-400 border-emerald-400 text-white scale-110' 
+                          : (theme === 'dark' ? 'border-neutral-500 text-transparent' : 'border-neutral-300 text-transparent')
+                      }`}>
+                        <Check size={14} strokeWidth={3} />
+                      </motion.div>
+                      
+                      {editingId === task.id ? (
+                        <form onSubmit={saveEdit} className="flex-1 flex items-center">
+                          <input 
+                            autoFocus
+                            value={editingText}
+                            onChange={e => setEditingText(e.target.value)}
+                            className={`flex-1 bg-transparent outline-none text-[15px] ${theme === 'dark' ? 'text-white' : 'text-neutral-800'}`}
+                            onBlur={() => saveEdit()}
+                          />
+                          <motion.button whileTap={{ scale: 0.96 }} type="button" onPointerDown={(e) => { e.preventDefault(); saveEdit(); }} className="ml-2 w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-600 transition-colors shrink-0 shadow-md">
+                            <Check size={16} strokeWidth={3} />
+                          </motion.button>
+                        </form>
+                      ) : (
+                        <span className={`flex-1 text-[15px] font-medium transition-all duration-300 ${
+                          task.completed ? 'opacity-50 line-through' : ''
+                        }`}>
+                          {task.text}
+                        </span>
+                      )}
+
+                      {editingId !== task.id && (
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                          <motion.button whileTap={{ scale: 0.96 }} onClick={() => { setEditingId(task.id); setEditingText(task.text); }} className="p-1.5 text-neutral-400 hover:text-blue-500 transition-colors">
+                            <Pencil size={16} />
+                          </motion.button>
+                          <motion.button whileTap={{ scale: 0.96 }} onClick={() => deleteTask(task.id)} className="p-1.5 text-neutral-400 hover:text-rose-500 transition-colors">
+                            <Trash2 size={16} />
+                          </motion.button>
+                        </div>
+                      )}
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+                {localTasks.length === 0 && (
+                  <div className="text-center py-8 opacity-50 text-sm">
+                    No tasks for today.
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className={`${cardClass} text-center py-8 opacity-50`}>
+              No active day found.
+            </div>
+          )}
+        </section>
+
+        {/* SECTION 2: EXAMS */}
+        <section>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-medium flex items-center">
+              {t(lang, 'exams')}
+            </h2>
+            <button 
+              onClick={() => {
+                playSound('click', settings.sound);
+                triggerHaptic('light', settings.haptics);
+                setShowAddExam(!showAddExam);
+              }}
+              className="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-600 active:scale-95 transition-all shadow-md"
+            >
+              <Plus size={20} className={`transition-transform duration-300 ${showAddExam ? 'rotate-45' : ''}`} />
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {showAddExam && (
+              <motion.form 
+                initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                transition={{ duration: 0.2 }}
+                onSubmit={addExam} 
+                className={`${cardClass} mb-8 relative overflow-hidden`}
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm font-medium opacity-70 mb-2 ml-1">{t(lang, 'examName')}</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={newExamName}
+                      onChange={e => setNewExamName(e.target.value)}
+                      className={inputClass}
+                      placeholder={t(lang, 'examName')}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium opacity-70 mb-2 ml-1">{t(lang, 'examDate')}</label>
+                    <input 
+                      type="date" 
+                      required
+                      value={newExamDate}
+                      onChange={e => setNewExamDate(e.target.value)}
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+                <button 
+                  type="submit"
+                  className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-medium hover:bg-emerald-600 active:scale-[0.98] transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center"
+                >
+                  <Check size={20} className="mr-2" /> {t(lang, 'save')}
+                </button>
+              </motion.form>
+            )}
+          </AnimatePresence>
+
+          <div className="space-y-4">
+            <AnimatePresence>
+              {upcomingExams.map(exam => {
+                const daysLeft = Math.ceil((new Date(exam.date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+                const isEditing = editingExamId === exam.id;
+                
+                return (
+                  <motion.div 
+                    key={exam.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    onPointerDown={() => handlePointerDown(exam.id)}
+                    onPointerUp={handlePointerUpOrLeave}
+                    onPointerLeave={handlePointerUpOrLeave}
+                    className={`${cardClass} relative select-none transition-all ${activeExamMenu === exam.id ? 'ring-2 ring-emerald-500/50' : ''}`}
+                  >
+                    {isEditing ? (
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <input 
+                          value={editingExamName}
+                          onChange={e => setEditingExamName(e.target.value)}
+                          className={`${inputClass} flex-1`}
+                          placeholder={t(lang, 'examName')}
+                        />
+                        <input 
+                          type="date"
+                          value={editingExamDate}
+                          onChange={e => setEditingExamDate(e.target.value)}
+                          className={`${inputClass} sm:w-40`}
+                        />
+                        <div className="flex gap-2">
+                          <button onClick={saveExamEdit} className="flex-1 sm:flex-none p-4 bg-emerald-500 text-white rounded-2xl hover:bg-emerald-600 flex items-center justify-center">
+                            <Check size={20} />
+                          </button>
+                          <button onClick={() => setEditingExamId(null)} className="flex-1 sm:flex-none p-4 bg-neutral-200 dark:bg-neutral-700 rounded-2xl flex items-center justify-center">
+                            <X size={20} />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="font-medium text-lg">{exam.name}</h3>
+                          <div className="flex items-center opacity-60 text-sm mt-1">
+                            <Calendar size={14} className="mr-1.5" />
+                            {new Intl.DateTimeFormat(lang, { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(exam.date))}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-medium text-emerald-500">{daysLeft > 0 ? daysLeft : 0}</div>
+                          <div className="text-xs opacity-60 uppercase tracking-wider">{t(lang, 'daysRemaining')}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Floating Action Menu */}
+                    <AnimatePresence>
+                      {activeExamMenu === exam.id && !isEditing && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                          className={`absolute top-full right-0 mt-2 z-10 w-48 rounded-2xl shadow-xl border overflow-hidden ${
+                            theme === 'dark' ? 'bg-neutral-800 border-neutral-700' : 
+                            isGlass ? 'bg-white/80 backdrop-blur-xl border-white/60' :
+                            'bg-white border-neutral-200'
+                          }`}
+                        >
+                          <button 
+                            onClick={() => {
+                              playSound('click', settings.sound);
+                              triggerHaptic('light', settings.haptics);
+                              setEditingExamId(exam.id);
+                              setEditingExamName(exam.name);
+                              setEditingExamDate(exam.date);
+                              setActiveExamMenu(null);
+                            }}
+                            className="w-full text-left px-4 py-3 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center"
+                          >
+                            <Pencil size={16} className="mr-2 opacity-70" /> {t(lang, 'editExam')}
+                          </button>
+                          <button 
+                            onClick={() => {
+                              playSound('click', settings.sound);
+                              triggerHaptic('light', settings.haptics);
+                              setExamToDelete(exam);
+                              setActiveExamMenu(null);
+                            }}
+                            className="w-full text-left px-4 py-3 text-sm font-medium text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors flex items-center"
+                          >
+                            <Trash2 size={16} className="mr-2 opacity-70" /> {t(lang, 'deleteExam')}
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          </div>
+
+          {completedExams.length > 0 && (
+            <div className="mt-12">
+              <h3 className="text-sm font-medium opacity-50 uppercase tracking-wider mb-4 ml-1">Completed Exams</h3>
+              <div className="space-y-4">
+                {completedExams.map(exam => (
+                  <div key={exam.id} className={`${cardClass} opacity-70`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-medium">{exam.name}</h3>
+                      <span className="text-xs px-2 py-1 rounded-full bg-black/5 dark:bg-white/10 uppercase tracking-wider font-medium">
+                        {t(lang, exam.rating || '')}
+                      </span>
+                    </div>
+                    {exam.response && (
+                      <p className="text-sm italic opacity-80 mt-2 border-l-2 border-emerald-500/30 pl-3">
+                        "{exam.response}"
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* Delete Confirmation Popup */}
+      <AnimatePresence>
+        {examToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm" 
+              onClick={() => setExamToDelete(null)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 20 }} 
+              className={popupClass}
+            >
+              <h2 className="text-xl font-medium mb-2">{t(lang, 'deleteConfirm')}</h2>
+              <p className="opacity-60 mb-6">{examToDelete.name}</p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setExamToDelete(null)}
+                  className="flex-1 py-3 rounded-xl font-medium border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+                >
+                  {t(lang, 'cancel')}
+                </button>
+                <button 
+                  onClick={confirmDeleteExam}
+                  className="flex-1 py-3 bg-rose-500 text-white rounded-xl font-medium hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/20"
+                >
+                  {t(lang, 'yesDelete')}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Exam Completion Popup */}
+      <AnimatePresence>
+        {examToRate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm" 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 20 }} 
+              className={popupClass}
+            >
+              <h2 className="text-2xl font-medium mb-2">{t(lang, 'howWasExam')}</h2>
+              <p className="opacity-60 mb-6">{examToRate.name}</p>
+
+              {!examRating ? (
+                <div className="grid grid-cols-1 gap-3">
+                  {['best', 'moderate', 'justGood', 'bad', 'worse'].map((rating) => (
+                    <button
+                      key={rating}
+                      onClick={() => {
+                        playSound('click', settings.sound);
+                        triggerHaptic('light', settings.haptics);
+                        setExamRating(rating as Exam['rating']);
+                      }}
+                      className={`py-4 px-6 rounded-2xl border flex items-center justify-between transition-all ${
+                        theme === 'dark' ? 'border-neutral-700 hover:bg-neutral-800' : 
+                        isGlass ? 'border-white/40 hover:bg-white/50' :
+                        'border-neutral-200 hover:bg-neutral-50'
+                      }`}
+                    >
+                      <span className="font-medium">{t(lang, rating)}</span>
+                      <ChevronRight size={18} className="opacity-50" />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  {(examRating === 'best' || examRating === 'moderate') ? (
+                    <div className="text-center py-8">
+                      <div className="text-5xl mb-4">✨</div>
+                      <h3 className="text-xl font-medium text-emerald-500">{t(lang, 'geniusMsg')}</h3>
+                    </div>
+                  ) : (
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium opacity-70 mb-3 ml-1">{t(lang, 'learnMsg')}</label>
+                      <textarea
+                        value={examResponse}
+                        onChange={e => setExamResponse(e.target.value)}
+                        maxLength={250}
+                        rows={4}
+                        className={`${inputClass} resize-none`}
+                        placeholder="..."
+                      />
+                      <div className="text-right text-xs opacity-50 mt-2">{examResponse.length}/250</div>
+                    </div>
+                  )}
+                  <button 
+                    onClick={saveExamRating}
+                    className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-medium hover:bg-emerald-600 active:scale-[0.98] transition-all shadow-lg shadow-emerald-500/20"
+                  >
+                    {t(lang, 'saveResponse')}
+                  </button>
+                </motion.div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+// Helper for ChevronRight since it wasn't imported at top
+function ChevronRight(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+

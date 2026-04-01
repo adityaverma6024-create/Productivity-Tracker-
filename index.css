@@ -1,0 +1,209 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { DayData, Task, AppSettings } from '../types';
+import { Check, X, Pencil, Trash2 } from 'lucide-react';
+import { t } from '../lib/i18n';
+import { playSound, triggerHaptic } from '../lib/sound';
+
+export default function TodoModal({ day, theme, settings, onClose, onUpdateTasks }: { day: DayData, theme: string, settings: AppSettings, onClose: () => void, onUpdateTasks: (tasks: Task[]) => void }) {
+  const [newTaskText, setNewTaskText] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+
+  // Use local state for instant UI updates, sync with parent
+  const [localTasks, setLocalTasks] = useState<Task[]>(day.tasks);
+
+  useEffect(() => {
+    setLocalTasks(day.tasks);
+  }, [day.tasks]);
+
+  const toggleTask = (taskId: string) => {
+    const newTasks = localTasks.map(t => {
+      if (t.id === taskId) {
+        const isCompleted = !t.completed;
+        if (isCompleted) {
+          playSound('complete', settings.sound);
+          triggerHaptic('success', settings.haptics);
+        } else {
+          playSound('click', settings.sound);
+          triggerHaptic('light', settings.haptics);
+        }
+        return { ...t, completed: isCompleted };
+      }
+      return t;
+    });
+    setLocalTasks(newTasks);
+    onUpdateTasks(newTasks);
+  };
+
+  const addTask = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newTaskText.trim()) return;
+    
+    playSound('add', settings.sound);
+    triggerHaptic('medium', settings.haptics);
+    
+    const newTask: Task = {
+      id: Date.now().toString(),
+      text: newTaskText.trim(),
+      completed: false
+    };
+    const newTasks = [...localTasks, newTask];
+    setLocalTasks(newTasks);
+    onUpdateTasks(newTasks);
+    setNewTaskText('');
+  };
+
+  const saveEdit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!editingText.trim() || !editingId) return;
+    
+    playSound('click', settings.sound);
+    triggerHaptic('light', settings.haptics);
+    
+    const newTasks = localTasks.map(t => 
+      t.id === editingId ? { ...t, text: editingText.trim() } : t
+    );
+    setLocalTasks(newTasks);
+    onUpdateTasks(newTasks);
+    setEditingId(null);
+  };
+
+  const deleteTask = (taskId: string) => {
+    playSound('delete', settings.sound);
+    triggerHaptic('medium', settings.haptics);
+    
+    const newTasks = localTasks.filter(t => t.id !== taskId);
+    setLocalTasks(newTasks);
+    onUpdateTasks(newTasks);
+  };
+
+  const d = new Date(day.date);
+  const fullDate = new Intl.DateTimeFormat(settings.language, { month: 'long', day: 'numeric', year: 'numeric' }).format(d);
+
+  const bgClass = theme === 'dark' ? 'bg-neutral-900 text-white border-neutral-800' : 
+                  theme === 'eyecare' ? 'bg-[#fdf6e3] text-[#5c4d3c] border-[#e6d5b8]' : 
+                  theme === 'glass' ? 'bg-white/70 backdrop-blur-xl border border-white/80 text-neutral-800 shadow-2xl shadow-black/10' :
+                  'bg-white text-neutral-800 border-neutral-100';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.3 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+      />
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        className={`relative w-full max-w-md rounded-[2rem] p-8 shadow-2xl border ${bgClass} max-h-[85vh] flex flex-col`}
+      >
+        <button 
+          onClick={() => {
+            playSound('click', settings.sound);
+            triggerHaptic('light', settings.haptics);
+            onClose();
+          }}
+          className={`absolute top-6 right-6 p-2 rounded-full transition-colors ${theme === 'dark' ? 'text-neutral-400 hover:bg-neutral-800' : 'text-neutral-400 hover:bg-black/5'}`}
+        >
+          <X size={20} strokeWidth={2.5} />
+        </button>
+        
+        <div className="mb-6 shrink-0">
+          <h2 className="text-2xl font-medium tracking-tight">{t(settings.language, 'day')} {day.dayIndex}</h2>
+          <p className="text-sm opacity-60 mt-1 mb-6">
+            {fullDate}
+          </p>
+
+          <div 
+            className={`flex items-center p-4 rounded-2xl border transition-all shadow-sm ${theme === 'dark' ? 'bg-neutral-800 border-neutral-700 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/50' : theme === 'glass' ? 'bg-white/50 border-white/60 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/50' : 'bg-white border-neutral-200 focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/50'}`}
+          >
+            <input 
+              value={newTaskText}
+              onChange={e => setNewTaskText(e.target.value)}
+              placeholder={t(settings.language, 'add_task')}
+              className={`flex-1 bg-transparent outline-none text-[15px] ${theme === 'dark' ? 'text-white placeholder:text-neutral-500' : 'text-neutral-800 placeholder:text-neutral-400'}`}
+            />
+            <motion.button 
+              whileTap={{ scale: 0.96 }}
+              type="button" 
+              onPointerDown={(e) => { e.preventDefault(); addTask(); }}
+              className={`ml-3 w-10 h-10 rounded-full flex items-center justify-center transition-all shrink-0 shadow-md ${
+                newTaskText.trim() ? 'bg-emerald-500 text-white hover:bg-emerald-600 scale-100 hover:scale-105' : 'bg-neutral-200 text-neutral-400 scale-100 cursor-not-allowed'
+              }`}
+            >
+              <Check size={20} strokeWidth={3} />
+            </motion.button>
+          </div>
+        </div>
+
+        <div className="overflow-y-auto flex-1 pr-2 -mr-2 space-y-3">
+          <AnimatePresence initial={false}>
+            {localTasks.map(task => (
+              <motion.div 
+                key={task.id} 
+                initial={{ opacity: 0, y: 20, height: 0 }}
+                animate={{ opacity: 1, y: 0, height: 'auto' }}
+                exit={{ opacity: 0, height: 0, scale: 0.95, marginBottom: 0 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
+                className={`group flex items-center p-4 rounded-2xl transition-all duration-150 border ${
+                  task.completed 
+                    ? (theme === 'dark' ? 'bg-emerald-900/20 border-emerald-900/50' : theme === 'glass' ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50/50 border-emerald-100/50') 
+                    : (theme === 'dark' ? 'bg-neutral-800 border-neutral-700' : theme === 'glass' ? 'bg-white/50 border-white/60 shadow-sm' : 'bg-white border-neutral-200 shadow-sm')
+                }`}
+              >
+                <motion.div 
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => toggleTask(task.id)}
+                  className={`w-6 h-6 rounded-full border flex items-center justify-center mr-4 cursor-pointer transition-all duration-150 shrink-0 ${
+                  task.completed 
+                    ? 'bg-emerald-400 border-emerald-400 text-white scale-110' 
+                    : (theme === 'dark' ? 'border-neutral-500 text-transparent' : 'border-neutral-300 text-transparent')
+                }`}>
+                  <Check size={14} strokeWidth={3} />
+                </motion.div>
+                
+                {editingId === task.id ? (
+                  <form onSubmit={saveEdit} className="flex-1 flex items-center">
+                    <input 
+                      autoFocus
+                      value={editingText}
+                      onChange={e => setEditingText(e.target.value)}
+                      className={`flex-1 bg-transparent outline-none text-[15px] ${theme === 'dark' ? 'text-white' : 'text-neutral-800'}`}
+                      onBlur={() => saveEdit()}
+                    />
+                    <motion.button whileTap={{ scale: 0.96 }} type="button" onPointerDown={(e) => { e.preventDefault(); saveEdit(); }} className="ml-2 w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-600 transition-colors shrink-0 shadow-md">
+                      <Check size={16} strokeWidth={3} />
+                    </motion.button>
+                  </form>
+                ) : (
+                  <span className={`flex-1 text-[15px] font-medium transition-all duration-300 ${
+                    task.completed ? 'opacity-50 line-through' : ''
+                  }`}>
+                    {task.text}
+                  </span>
+                )}
+
+                {editingId !== task.id && (
+                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                    <motion.button whileTap={{ scale: 0.96 }} onClick={() => { setEditingId(task.id); setEditingText(task.text); }} className="p-1.5 text-neutral-400 hover:text-blue-500 transition-colors">
+                      <Pencil size={16} />
+                    </motion.button>
+                    <motion.button whileTap={{ scale: 0.96 }} onClick={() => deleteTask(task.id)} className="p-1.5 text-neutral-400 hover:text-rose-500 transition-colors">
+                      <Trash2 size={16} />
+                    </motion.button>
+                  </div>
+                )}
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
